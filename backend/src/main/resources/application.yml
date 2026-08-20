@@ -1,0 +1,33 @@
+spring:
+  application: {name: routepulse-api}
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/routepulse}
+    username: ${SPRING_DATASOURCE_USERNAME:routepulse}
+    password: ${SPRING_DATASOURCE_PASSWORD:routepulse}
+  jpa: {open-in-view: false}
+  data.redis:
+    host: ${SPRING_DATA_REDIS_HOST:localhost}
+    port: ${SPRING_DATA_REDIS_PORT:6380}
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+management.endpoints.web.exposure.include: health,info
+management.endpoint.health.probes.enabled: true
+routepulse:
+  ingestion:
+    enabled: ${ROUTEPULSE_INGESTION_ENABLED:false}
+    fixed-delay-ms: 15000
+    request-timeout: 10s
+  agencies:
+    - id: wolfline
+      name: NC State Wolfline
+      enabled: true
+      timezone: America/New_York
+      feeds:
+        schedule: https://passio3.com/ncstateuni/passioTransit/gtfs/google_transit.zip
+        vehicle-positions: https://passio3.com/ncstateuni/passioTransit/gtfs/realtime/vehiclePositions
+        trip-updates: https://passio3.com/ncstateuni/passioTransit/gtfs/realtime/tripUpdates
+        alerts: https://passio3.com/ncstateuni/passioTransit/gtfs/realtime/serviceAlerts
+
