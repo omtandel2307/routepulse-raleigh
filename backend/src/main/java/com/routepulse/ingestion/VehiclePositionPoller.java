@@ -6,10 +6,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Component
 @ConditionalOnProperty(name = "routepulse.ingestion.enabled", havingValue = "true")
 public class VehiclePositionPoller {
+  private static final Logger log = LoggerFactory.getLogger(VehiclePositionPoller.class);
   private final RoutePulseProperties props;
   private final GtfsRealtimeClient client;
   private final KafkaTemplate<String, Object> kafka;
@@ -22,15 +25,32 @@ public class VehiclePositionPoller {
 
   @Scheduled(fixedDelayString = "${routepulse.ingestion.fixed-delay-ms}")
   public void poll() {
-    props.agencies().stream().filter(RoutePulseProperties.Agency::enabled)
-        .forEach(a -> client.fetch(a.feeds().vehiclePositions()).getEntityList().stream()
-            .filter(e -> e.hasVehicle() && e.getVehicle().hasPosition()).forEach(e -> {
-              var v = e.getVehicle();
-              var id = v.getVehicle().getId();
-              var p = v.getPosition();
-              kafka.send(KafkaConfig.VEHICLE_POSITIONS_TOPIC, a.id() + ":" + id,
-                  new VehiclePositionEvent(a.id(), id, v.getTrip().getTripId(), v.getTrip().getRouteId(),
-                      p.getLatitude(), p.getLongitude(), p.getBearing(), p.getSpeed(), v.getTimestamp()));
-            }));
+    props.agencies().stream()
+        .filter(RoutePulseProperties.Agency::enabled)
+        .forEach(this::pollAgency);
+  }
+
+  private void pollAgency(RoutePulseProperties.Agency agency) {
+    try {
+      var feed = client.fetch(agency.feeds().vehiclePositions());
+      long timestamp = feed.getHeader().hasTimestamp() ? feed.getHeader().getTimestamp() : 0;
+      feed.getEntityList().forEach(entity ->
+          GtfsRealtimeEventMapper.vehiclePosition(agency.id(), entity, timestamp)
+              .ifPresent(event -> kafka.send(KafkaConfig.VEHICLE_POSITIONS_TOPIC,
+                  event.agencyId() + ":" + event.vehicleId(), event)));
+    } catch (RuntimeException exception) {
+      log.warn("Unable to poll vehicle positions for agency {}", agency.id(), exception);
+    }
+
+    try {
+      var feed = client.fetch(agency.feeds().tripUpdates());
+      long timestamp = feed.getHeader().hasTimestamp() ? feed.getHeader().getTimestamp() : 0;
+      feed.getEntityList().forEach(entity ->
+          GtfsRealtimeEventMapper.tripUpdate(agency.id(), entity, timestamp)
+              .ifPresent(event -> kafka.send(KafkaConfig.TRIP_UPDATES_TOPIC,
+                  event.agencyId() + ":" + event.tripId(), event)));
+    } catch (RuntimeException exception) {
+      log.warn("Unable to poll trip updates for agency {}", agency.id(), exception);
+    }
   }
 }

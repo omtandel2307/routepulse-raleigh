@@ -5,8 +5,11 @@ import java.time.Duration;
 import java.util.List;
 
 @ConfigurationProperties(prefix = "routepulse")
-public record RoutePulseProperties(Ingestion ingestion, List<Agency> agencies) {
+public record RoutePulseProperties(Ingestion ingestion, Schedule schedule, List<Agency> agencies) {
   public record Ingestion(boolean enabled, long fixedDelayMs, Duration requestTimeout) {
+  }
+
+  public record Schedule(boolean importOnStartup) {
   }
 
   public record Agency(String id, String name, boolean enabled, String timezone, Feeds feeds) {

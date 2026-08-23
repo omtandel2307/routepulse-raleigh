@@ -13,6 +13,13 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: routepulse-api
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.routepulse.ingestion
 management.endpoints.web.exposure.include: health,info
 management.endpoint.health.probes.enabled: true
 routepulse:
@@ -20,6 +27,8 @@ routepulse:
     enabled: ${ROUTEPULSE_INGESTION_ENABLED:false}
     fixed-delay-ms: 15000
     request-timeout: 10s
+  schedule:
+    import-on-startup: ${ROUTEPULSE_SCHEDULE_IMPORT_ON_STARTUP:false}
   agencies:
     - id: wolfline
       name: NC State Wolfline
@@ -30,4 +39,3 @@ routepulse:
         vehicle-positions: https://passio3.com/ncstateuni/passioTransit/gtfs/realtime/vehiclePositions
         trip-updates: https://passio3.com/ncstateuni/passioTransit/gtfs/realtime/tripUpdates
         alerts: https://passio3.com/ncstateuni/passioTransit/gtfs/realtime/serviceAlerts
-

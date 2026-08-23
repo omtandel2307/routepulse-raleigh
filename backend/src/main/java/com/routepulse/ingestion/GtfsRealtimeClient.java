@@ -19,6 +19,9 @@ public class GtfsRealtimeClient {
 
   public GtfsRealtime.FeedMessage fetch(String url) {
     byte[] body = client.get().uri(url).retrieve().body(byte[].class);
+    if (body == null || body.length == 0) {
+      throw new IllegalStateException("GTFS-Realtime feed returned an empty response");
+    }
     try {
       return GtfsRealtime.FeedMessage.parseFrom(body);
     } catch (Exception e) {
