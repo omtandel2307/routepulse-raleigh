@@ -3,6 +3,7 @@ package com.routepulse.api;
 import com.routepulse.catalog.TransitCatalogRepository;
 import com.routepulse.catalog.TransitCatalogRepository.ImportStatus;
 import com.routepulse.catalog.TransitCatalogRepository.RouteView;
+import com.routepulse.catalog.TransitCatalogRepository.RouteGeometryCollection;
 import com.routepulse.catalog.TransitCatalogRepository.StopView;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,6 +31,13 @@ public class TransitCatalogController {
   @GetMapping("/stops")
   public List<StopView> stops(@RequestParam(defaultValue = "wolfline") String agencyId) {
     return catalog.stops(agencyId);
+  }
+
+  @GetMapping("/routes/geometry")
+  public RouteGeometryCollection routeGeometry(
+      @RequestParam(defaultValue = "wolfline") String agencyId,
+      @RequestParam(required = false) String routeId) {
+    return catalog.routeGeometry(agencyId, routeId);
   }
 
   @GetMapping("/schedule/status")

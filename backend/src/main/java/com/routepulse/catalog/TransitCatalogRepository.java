@@ -5,6 +5,8 @@ import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -69,7 +71,7 @@ public class TransitCatalogRepository {
   public Optional<ImportStatus> importStatus(String agencyId) {
     return jdbc.sql("""
             SELECT agency_id, source_url, imported_at, route_count, stop_count, trip_count,
-                   stop_time_count
+                   stop_time_count, shape_point_count
             FROM gtfs_import
             WHERE agency_id = :agencyId
             """)
@@ -81,9 +83,50 @@ public class TransitCatalogRepository {
             row.getInt("route_count"),
             row.getInt("stop_count"),
             row.getInt("trip_count"),
-            row.getInt("stop_time_count")
+            row.getInt("stop_time_count"),
+            row.getInt("shape_point_count")
         ))
         .optional();
+  }
+
+  public RouteGeometryCollection routeGeometry(String agencyId, String routeId) {
+    String routeFilter = routeId == null || routeId.isBlank() ? "" : " AND route.route_id = :routeId";
+    var query = jdbc.sql("""
+            SELECT route.route_id, route.short_name, route.long_name, route.color,
+                   shapes.shape_id, shapes.direction_id, point.sequence, point.latitude, point.longitude
+            FROM transit_route route
+            JOIN (
+              SELECT DISTINCT agency_id, route_id, shape_id, direction_id
+              FROM transit_trip
+              WHERE shape_id IS NOT NULL
+            ) shapes ON shapes.agency_id = route.agency_id AND shapes.route_id = route.route_id
+            JOIN transit_shape_point point
+              ON point.agency_id = shapes.agency_id AND point.shape_id = shapes.shape_id
+            WHERE route.agency_id = :agencyId
+            """ + routeFilter + """
+            ORDER BY route.short_name NULLS LAST, route.route_id, shapes.shape_id,
+                     shapes.direction_id NULLS FIRST, point.sequence
+            """).param("agencyId", agencyId);
+    if (!routeFilter.isEmpty()) {
+      query = query.param("routeId", routeId);
+    }
+
+    List<ShapeCoordinate> rows = query.query((row, number) -> new ShapeCoordinate(
+        row.getString("route_id"), row.getString("short_name"), row.getString("long_name"),
+        row.getString("color"), row.getString("shape_id"),
+        row.getObject("direction_id", Integer.class), row.getDouble("longitude"),
+        row.getDouble("latitude"))).list();
+
+    Map<String, RouteGeometryBuilder> grouped = new LinkedHashMap<>();
+    for (ShapeCoordinate row : rows) {
+      String key = row.routeId() + "\u0000" + row.shapeId() + "\u0000" + row.directionId();
+      grouped.computeIfAbsent(key, ignored -> new RouteGeometryBuilder(row)).coordinates()
+          .add(List.of(row.longitude(), row.latitude()));
+    }
+    List<RouteGeometryFeature> features = grouped.values().stream()
+        .map(RouteGeometryBuilder::feature)
+        .toList();
+    return new RouteGeometryCollection("FeatureCollection", features);
   }
 
   public record RouteView(String agencyId, String id, String shortName, String longName, int type,
@@ -95,6 +138,39 @@ public class TransitCatalogRepository {
   }
 
   public record ImportStatus(String agencyId, String sourceUrl, Instant importedAt, int routes,
-                             int stops, int trips, int stopTimes) {
+                             int stops, int trips, int stopTimes, int shapePoints) {
+  }
+
+  public record RouteGeometryCollection(String type, List<RouteGeometryFeature> features) {
+  }
+
+  public record RouteGeometryFeature(String type, RouteGeometryProperties properties,
+                                     LineStringGeometry geometry) {
+  }
+
+  public record RouteGeometryProperties(String routeId, String shortName, String longName,
+                                        String color, String shapeId, Integer directionId) {
+  }
+
+  public record LineStringGeometry(String type, List<List<Double>> coordinates) {
+  }
+
+  private record ShapeCoordinate(String routeId, String shortName, String longName, String color,
+                                 String shapeId, Integer directionId, double longitude,
+                                 double latitude) {
+  }
+
+  private record RouteGeometryBuilder(ShapeCoordinate metadata, List<List<Double>> coordinates) {
+    private RouteGeometryBuilder(ShapeCoordinate metadata) {
+      this(metadata, new java.util.ArrayList<>());
+    }
+
+    private RouteGeometryFeature feature() {
+      return new RouteGeometryFeature("Feature",
+          new RouteGeometryProperties(metadata.routeId(), metadata.shortName(), metadata.longName(),
+              metadata.color() == null ? "#9bea62" : "#" + metadata.color().replace("#", ""),
+              metadata.shapeId(), metadata.directionId()),
+          new LineStringGeometry("LineString", List.copyOf(coordinates)));
+    }
   }
 }

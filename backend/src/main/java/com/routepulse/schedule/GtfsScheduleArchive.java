@@ -26,7 +26,8 @@ public final class GtfsScheduleArchive {
       "routes.txt", "stops.txt", "trips.txt", "stop_times.txt"
   );
   private static final Set<String> IMPORTED_FILES = Set.of(
-      "routes.txt", "stops.txt", "trips.txt", "stop_times.txt", "calendar.txt", "calendar_dates.txt"
+      "routes.txt", "stops.txt", "trips.txt", "stop_times.txt", "shapes.txt", "calendar.txt",
+      "calendar_dates.txt"
   );
   private static final CSVFormat GTFS_CSV = CSVFormat.RFC4180.builder()
       .setHeader()
@@ -54,6 +55,9 @@ public final class GtfsScheduleArchive {
         parse(files.get("stops.txt"), GtfsScheduleArchive::stop),
         parse(files.get("trips.txt"), GtfsScheduleArchive::trip),
         parse(files.get("stop_times.txt"), GtfsScheduleArchive::stopTime),
+        files.containsKey("shapes.txt")
+            ? parse(files.get("shapes.txt"), GtfsScheduleArchive::shapePoint)
+            : List.of(),
         files.containsKey("calendar.txt")
             ? parse(files.get("calendar.txt"), GtfsScheduleArchive::calendar)
             : List.of(),
@@ -145,6 +149,12 @@ public final class GtfsScheduleArchive {
         nullableInteger(row, "timepoint"), nullableDecimal(row, "shape_dist_traveled"));
   }
 
+  private static ShapePoint shapePoint(CSVRecord row) {
+    return new ShapePoint(required(row, "shape_id"), integer(row, "shape_pt_sequence"),
+        decimal(row, "shape_pt_lat"), decimal(row, "shape_pt_lon"),
+        nullableDecimal(row, "shape_dist_traveled"));
+  }
+
   private static Calendar calendar(CSVRecord row) {
     return new Calendar(required(row, "service_id"), flag(row, "monday"), flag(row, "tuesday"),
         flag(row, "wednesday"), flag(row, "thursday"), flag(row, "friday"), flag(row, "saturday"),
@@ -204,7 +214,8 @@ public final class GtfsScheduleArchive {
   }
 
   public record ScheduleData(List<Route> routes, List<Stop> stops, List<Trip> trips,
-                             List<StopTime> stopTimes, List<Calendar> calendars,
+                             List<StopTime> stopTimes, List<ShapePoint> shapePoints,
+                             List<Calendar> calendars,
                              List<ServiceException> exceptions) {
   }
 
@@ -223,6 +234,10 @@ public final class GtfsScheduleArchive {
   public record StopTime(String tripId, String stopId, int sequence, Integer arrivalSeconds,
                          Integer departureSeconds, Integer pickupType, Integer dropOffType,
                          Integer timepoint, Double shapeDistanceTraveled) {
+  }
+
+  public record ShapePoint(String shapeId, int sequence, double latitude, double longitude,
+                           Double distanceTraveled) {
   }
 
   public record Calendar(String serviceId, boolean monday, boolean tuesday, boolean wednesday,

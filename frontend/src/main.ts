@@ -1,8 +1,9 @@
 import { CommonModule } from "@angular/common";
 import { HttpClient, provideHttpClient } from "@angular/common/http";
-import { ChangeDetectorRef, Component, DestroyRef, inject, OnInit } from "@angular/core";
+import { AfterViewInit, ChangeDetectorRef, Component, DestroyRef, ElementRef, inject, OnInit, ViewChild } from "@angular/core";
 import { bootstrapApplication } from "@angular/platform-browser";
 import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
+import * as L from "leaflet";
 import { forkJoin, timer } from "rxjs";
 import { switchMap } from "rxjs/operators";
 
@@ -90,6 +91,17 @@ interface ChartPoint {
   data: TimelinePoint;
 }
 
+interface RouteGeometryCollection {
+  type: "FeatureCollection";
+  features: RouteGeometryFeature[];
+}
+
+interface RouteGeometryFeature {
+  type: "Feature";
+  properties: { routeId: string; shortName: string; longName: string; color: string; shapeId: string; directionId: number | null };
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+}
+
 @Component({
   selector: "app-root",
   standalone: true,
@@ -158,33 +170,12 @@ interface ChartPoint {
               <div><small>LIVE VEHICLE MAP</small><h2>{{ selectedRouteName }}</h2></div>
               <div class="legend"><span><i class="dot on-time"></i>On time</span><span><i class="dot late"></i>Late</span><span><i class="dot unknown"></i>Unknown</span></div>
             </header>
-            <div class="map">
-              <svg class="road-layer" viewBox="0 0 900 560" preserveAspectRatio="none" aria-hidden="true">
-                <path class="road minor" d="M-20 420 C180 330 260 430 450 320 S700 150 940 230" />
-                <path class="road major" d="M-30 150 C140 210 220 175 370 245 S650 400 930 350" />
-                <path class="road major" d="M190 -20 C250 160 360 200 410 330 S520 500 590 590" />
-                <path class="road minor" d="M670 -20 C600 150 570 210 620 330 S760 490 830 590" />
-                <path class="road minor" d="M20 510 C180 490 270 520 390 450 S570 310 720 300" />
-              </svg>
-              <div class="district campus">NC STATE<br><span>MAIN CAMPUS</span></div>
-              <div class="district centennial">CENTENNIAL<br><span>CAMPUS</span></div>
-              <span class="map-label downtown">DOWNTOWN RALEIGH →</span>
-              <span class="map-label western">WESTERN BLVD</span>
-
-              <button
-                *ngFor="let vehicle of filteredVehicles; trackBy: trackVehicle"
-                [class]="'vehicle-marker ' + statusClass(vehicle.delayStatus)"
-                [style.left.%]="markerPosition(vehicle).left"
-                [style.top.%]="markerPosition(vehicle).top"
-                [style.--route-color]="routeColor(vehicle.routeId)"
-                [title]="vehicleTitle(vehicle)"
-                type="button">
-                <span>{{ vehicle.routeShortName || 'BUS' }}</span>
-              </button>
-
+            <div class="map real-map-shell">
+              <div #mapContainer class="real-map" aria-label="Interactive map of Wolfline buses and routes"></div>
               <div class="empty-map" *ngIf="!loading && filteredVehicles.length === 0">
                 <span>◌</span><b>No active vehicles</b><small>Try “All Wolfline routes” or enable live ingestion.</small>
               </div>
+              <div class="map-hint">{{ routePathCount }} route paths · drag to move · scroll to zoom</div>
               <div class="map-stamp"><i></i> LIVE · {{ lastUpdatedLabel }}</div>
             </div>
           </article>
@@ -298,10 +289,15 @@ interface ChartPoint {
     </div>
   `,
 })
-class App implements OnInit {
+class App implements OnInit, AfterViewInit {
+  @ViewChild("mapContainer") private mapContainer!: ElementRef<HTMLDivElement>;
   private readonly http = inject(HttpClient);
   private readonly destroyRef = inject(DestroyRef);
   private readonly changeDetector = inject(ChangeDetectorRef);
+  private map: L.Map | null = null;
+  private readonly vehicleMarkers = new Map<string, L.Marker>();
+  private readonly routePolylines: Array<{ routeId: string; line: L.Polyline }> = [];
+  private geometry: RouteGeometryCollection | null = null;
 
   routes: Route[] = [];
   vehicles: Vehicle[] = [];
@@ -320,6 +316,20 @@ class App implements OnInit {
   connectionState: "loading" | "live" | "offline" = "loading";
   loading = true;
   lastRefresh: Date | null = null;
+
+  ngAfterViewInit(): void {
+    this.map = L.map(this.mapContainer.nativeElement, {
+      zoomControl: true,
+      preferCanvas: false,
+    }).setView([35.785, -78.675], 13);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(this.map);
+    this.loadRouteGeometry();
+    this.updateVehicleMarkers();
+    this.destroyRef.onDestroy(() => this.map?.remove());
+  }
 
   ngOnInit(): void {
     timer(0, 15_000)
@@ -368,6 +378,7 @@ class App implements OnInit {
     this.loading = false;
     this.loadRouteStatus();
     this.loadAnalytics();
+    this.updateVehicleMarkers();
     this.changeDetector.detectChanges();
   }
 
@@ -375,6 +386,8 @@ class App implements OnInit {
     this.selectedRouteId = routeId;
     this.loadRouteStatus();
     this.loadAnalytics();
+    this.updateMapSelection(true);
+    this.updateVehicleMarkers();
   }
 
   selectTimeRange(hours: number): void {
@@ -467,12 +480,6 @@ class App implements OnInit {
     return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`;
   }
 
-  markerPosition(vehicle: Vehicle): { left: number; top: number } {
-    const left = (vehicle.longitude - -78.725) / (-78.635 - -78.725) * 100;
-    const top = (35.825 - vehicle.latitude) / (35.825 - 35.755) * 100;
-    return { left: Math.min(96, Math.max(4, left)), top: Math.min(94, Math.max(6, top)) };
-  }
-
   routeColor(routeId: string | null): string {
     const color = this.routes.find(route => route.id === routeId)?.color;
     return color ? `#${color.replace("#", "")}` : "#9bea62";
@@ -502,6 +509,139 @@ class App implements OnInit {
 
   vehicleTitle(vehicle: Vehicle): string {
     return `${vehicle.routeLongName || "Wolfline"} · Bus ${vehicle.vehicleId} · ${this.statusLabel(vehicle)}`;
+  }
+
+  private loadRouteGeometry(): void {
+    this.http.get<RouteGeometryCollection>("/api/v1/routes/geometry")
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: geometry => {
+          this.geometry = geometry;
+          this.addRouteLayers();
+          this.updateMapSelection(false);
+          this.changeDetector.detectChanges();
+        },
+        error: () => {
+          this.geometry = null;
+        },
+      });
+  }
+
+  private addRouteLayers(): void {
+    if (!this.map || !this.geometry || this.routePolylines.length) return;
+    for (const feature of this.geometry.features) {
+      const points = feature.geometry.coordinates.map(([longitude, latitude]) =>
+        L.latLng(latitude, longitude));
+      L.polyline(points, {
+        color: "#07110d",
+        weight: 9,
+        opacity: 0.72,
+        interactive: false,
+        lineCap: "round",
+        lineJoin: "round",
+      }).addTo(this.map);
+      const line = L.polyline(points, {
+        color: feature.properties.color,
+        weight: 5,
+        opacity: 0.9,
+        lineCap: "round",
+        lineJoin: "round",
+        className: "wolfline-route-path",
+      }).addTo(this.map);
+      line.bindTooltip(`${feature.properties.shortName} · ${feature.properties.longName}`, {
+        sticky: true,
+        className: "route-tooltip",
+      });
+      line.on("click", () => {
+        this.selectRoute(feature.properties.routeId);
+        this.changeDetector.detectChanges();
+      });
+      this.routePolylines.push({ routeId: feature.properties.routeId, line });
+    }
+  }
+
+  private updateMapSelection(fit: boolean): void {
+    if (!this.map || !this.geometry) return;
+    const selected = this.selectedRouteId;
+    for (const route of this.routePolylines) {
+      const highlighted = selected === "all" || route.routeId === selected;
+      route.line.setStyle({
+        opacity: highlighted ? 0.95 : 0.18,
+        weight: selected !== "all" && highlighted ? 8 : 5,
+      });
+      if (highlighted) route.line.bringToFront();
+    }
+    if (!fit) return;
+
+    const features = selected === "all"
+      ? this.geometry.features
+      : this.geometry.features.filter(feature => feature.properties.routeId === selected);
+    const bounds = L.latLngBounds([]);
+    for (const feature of features) {
+      for (const [longitude, latitude] of feature.geometry.coordinates) bounds.extend([latitude, longitude]);
+    }
+    if (bounds.isValid()) this.map.fitBounds(bounds, { padding: [48, 48], animate: true, maxZoom: 15 });
+  }
+
+  private updateVehicleMarkers(): void {
+    if (!this.map) return;
+    const visible = new Set(this.filteredVehicles.map(vehicle => vehicle.vehicleId));
+    for (const [vehicleId, marker] of this.vehicleMarkers) {
+      if (!visible.has(vehicleId)) {
+        marker.remove();
+        this.vehicleMarkers.delete(vehicleId);
+      }
+    }
+    for (const vehicle of this.filteredVehicles) {
+      const existing = this.vehicleMarkers.get(vehicle.vehicleId);
+      if (existing) {
+        existing.setLatLng([vehicle.latitude, vehicle.longitude]);
+        existing.setPopupContent(this.vehiclePopupContent(vehicle));
+        continue;
+      }
+      const element = document.createElement("button");
+      element.type = "button";
+      element.className = `map-bus-marker ${this.statusClass(vehicle.delayStatus)}`;
+      element.style.setProperty("--route-color", this.routeColor(vehicle.routeId));
+      element.textContent = vehicle.routeShortName || "BUS";
+      element.setAttribute("aria-label", this.vehicleTitle(vehicle));
+      const marker = L.marker([vehicle.latitude, vehicle.longitude], {
+        icon: L.divIcon({
+          html: element,
+          className: "routepulse-marker",
+          iconSize: [42, 42],
+          iconAnchor: [21, 21],
+          popupAnchor: [0, -24],
+        }),
+        title: this.vehicleTitle(vehicle),
+      }).bindPopup(this.vehiclePopupContent(vehicle), {
+        closeButton: false,
+        maxWidth: 270,
+        className: "routepulse-popup",
+      }).addTo(this.map);
+      this.vehicleMarkers.set(vehicle.vehicleId, marker);
+    }
+  }
+
+  private vehiclePopupContent(vehicle: Vehicle): HTMLElement {
+    const content = document.createElement("div");
+    content.className = "bus-popup";
+    const eyebrow = document.createElement("small");
+    eyebrow.textContent = `BUS ${vehicle.vehicleId}`;
+    const title = document.createElement("strong");
+    title.textContent = `${vehicle.routeShortName || "—"} · ${vehicle.routeLongName || "Wolfline"}`;
+    const status = document.createElement("span");
+    status.className = this.statusClass(vehicle.delayStatus);
+    status.textContent = this.statusLabel(vehicle);
+    const detail = document.createElement("p");
+    const speed = vehicle.speed == null ? "Speed unavailable" : `${Math.round(vehicle.speed * 2.23694)} mph`;
+    detail.textContent = `${speed} · updated ${this.relativeTime(vehicle.recordedAt)}`;
+    content.append(eyebrow, title, status, detail);
+    return content;
+  }
+
+  get routePathCount(): number {
+    return this.geometry?.features.length ?? 0;
   }
 
   get analyticsBucketMinutes(): number {

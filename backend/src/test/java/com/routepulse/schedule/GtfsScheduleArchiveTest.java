@@ -32,6 +32,11 @@ class GtfsScheduleArchiveTest {
         trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type,timepoint,shape_dist_traveled
         30,25:01:02,25:01:30,20,1,,,1,42.5
         """);
+    files.put("shapes.txt", """
+        shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled
+        shape-1,35.77,-78.68,1,0
+        shape-1,35.78,-78.67,2,42.5
+        """);
     files.put("calendar.txt", """
         service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
         weekday,1,1,1,1,1,0,0,20260101,20261231
@@ -46,6 +51,15 @@ class GtfsScheduleArchiveTest {
         .satisfies(stopTime -> {
           assertThat(stopTime.arrivalSeconds()).isEqualTo(90_062);
           assertThat(stopTime.departureSeconds()).isEqualTo(90_090);
+        });
+    assertThat(schedule.shapePoints()).hasSize(2);
+    assertThat(schedule.shapePoints().get(1))
+        .satisfies(point -> {
+          assertThat(point.shapeId()).isEqualTo("shape-1");
+          assertThat(point.sequence()).isEqualTo(2);
+          assertThat(point.latitude()).isEqualTo(35.78);
+          assertThat(point.longitude()).isEqualTo(-78.67);
+          assertThat(point.distanceTraveled()).isEqualTo(42.5);
         });
   }
 

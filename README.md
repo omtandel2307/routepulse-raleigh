@@ -20,7 +20,7 @@ Open http://localhost:4200. API status is at http://localhost:8080/api/v1/system
 ## Import the Wolfline schedule
 
 The first schedule import downloads the public GTFS archive and transactionally replaces Wolfline's
-routes, stops, trips, stop times, calendars, and service exceptions:
+routes, stops, trips, stop times, route shape points, calendars, and service exceptions:
 
 ```powershell
 Invoke-RestMethod -Method Post `
@@ -32,8 +32,13 @@ Inspect the imported catalog:
 ```powershell
 Invoke-RestMethod http://localhost:8080/api/v1/schedule/status
 Invoke-RestMethod http://localhost:8080/api/v1/routes
+Invoke-RestMethod http://localhost:8080/api/v1/routes/geometry
 Invoke-RestMethod http://localhost:8080/api/v1/stops
 ```
+
+The dashboard uses Leaflet with OpenStreetMap streets. GTFS `shapes.txt` coordinates are
+served as GeoJSON by `/api/v1/routes/geometry`, so selecting or clicking a route highlights its real
+published path. Live bus markers update every 15 seconds and open vehicle detail popups when clicked.
 
 To import automatically when the API starts, set
 `ROUTEPULSE_SCHEDULE_IMPORT_ON_STARTUP=true`. Manual import is the safer development default.

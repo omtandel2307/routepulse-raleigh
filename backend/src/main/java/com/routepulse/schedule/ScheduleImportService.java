@@ -5,6 +5,7 @@ import com.routepulse.schedule.GtfsScheduleArchive.Calendar;
 import com.routepulse.schedule.GtfsScheduleArchive.Route;
 import com.routepulse.schedule.GtfsScheduleArchive.ScheduleData;
 import com.routepulse.schedule.GtfsScheduleArchive.ServiceException;
+import com.routepulse.schedule.GtfsScheduleArchive.ShapePoint;
 import com.routepulse.schedule.GtfsScheduleArchive.Stop;
 import com.routepulse.schedule.GtfsScheduleArchive.StopTime;
 import com.routepulse.schedule.GtfsScheduleArchive.Trip;
@@ -52,24 +53,26 @@ public class ScheduleImportService {
       insertStops(agencyId, data);
       insertCalendars(agencyId, data);
       insertExceptions(agencyId, data);
+      insertShapePoints(agencyId, data);
       insertTrips(agencyId, data);
       insertStopTimes(agencyId, data);
       jdbc.update("""
               INSERT INTO gtfs_import(agency_id, source_url, imported_at, route_count, stop_count,
-                                      trip_count, stop_time_count)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+                                      trip_count, stop_time_count, shape_point_count)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
               """, agencyId, sourceUrl, Timestamp.from(importedAt), data.routes().size(),
-          data.stops().size(), data.trips().size(), data.stopTimes().size());
+          data.stops().size(), data.trips().size(), data.stopTimes().size(), data.shapePoints().size());
     });
 
     return new ImportSummary(agencyId, sourceUrl, importedAt, data.routes().size(), data.stops().size(),
-        data.trips().size(), data.stopTimes().size());
+        data.trips().size(), data.stopTimes().size(), data.shapePoints().size());
   }
 
   private void clearExisting(String agencyId) {
     jdbc.update("DELETE FROM gtfs_import WHERE agency_id = ?", agencyId);
     jdbc.update("DELETE FROM stop_time WHERE agency_id = ?", agencyId);
     jdbc.update("DELETE FROM transit_trip WHERE agency_id = ?", agencyId);
+    jdbc.update("DELETE FROM transit_shape_point WHERE agency_id = ?", agencyId);
     jdbc.update("DELETE FROM service_exception WHERE agency_id = ?", agencyId);
     jdbc.update("DELETE FROM service_calendar WHERE agency_id = ?", agencyId);
     jdbc.update("DELETE FROM transit_route WHERE agency_id = ?", agencyId);
@@ -155,6 +158,25 @@ public class ScheduleImportService {
     });
   }
 
+  private void insertShapePoints(String agencyId, ScheduleData data) {
+    jdbc.batchUpdate("""
+            INSERT INTO transit_shape_point(agency_id, shape_id, sequence, latitude, longitude,
+                                            distance_traveled)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, data.shapePoints(), BATCH_SIZE, (statement, point) -> {
+      statement.setString(1, agencyId);
+      statement.setString(2, point.shapeId());
+      statement.setInt(3, point.sequence());
+      statement.setDouble(4, point.latitude());
+      statement.setDouble(5, point.longitude());
+      if (point.distanceTraveled() == null) {
+        statement.setNull(6, Types.DOUBLE);
+      } else {
+        statement.setDouble(6, point.distanceTraveled());
+      }
+    });
+  }
+
   private void insertStopTimes(String agencyId, ScheduleData data) {
     jdbc.batchUpdate("""
             INSERT INTO stop_time(agency_id, trip_id, stop_sequence, stop_id, arrival_seconds,
@@ -188,6 +210,6 @@ public class ScheduleImportService {
   }
 
   public record ImportSummary(String agencyId, String sourceUrl, Instant importedAt, int routes,
-                              int stops, int trips, int stopTimes) {
+                              int stops, int trips, int stopTimes, int shapePoints) {
   }
 }
