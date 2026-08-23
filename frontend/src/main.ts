@@ -49,6 +49,47 @@ interface RouteStatus {
   lastUpdated: string | null;
 }
 
+interface AnalyticsSummary {
+  sampleCount: number;
+  routeCount: number;
+  reliabilityPercent: number;
+  averageDelaySeconds: number | null;
+  earlySamples: number;
+  onTimeSamples: number;
+  lateSamples: number;
+  firstObservation: string | null;
+  lastObservation: string | null;
+}
+
+interface TimelinePoint {
+  bucketStart: string;
+  sampleCount: number;
+  reliabilityPercent: number;
+  averageDelaySeconds: number | null;
+  earlySamples: number;
+  onTimeSamples: number;
+  lateSamples: number;
+}
+
+interface RoutePerformance {
+  routeId: string;
+  shortName: string;
+  longName: string;
+  color: string | null;
+  sampleCount: number;
+  reliabilityPercent: number;
+  averageDelaySeconds: number | null;
+  earlySamples: number;
+  onTimeSamples: number;
+  lateSamples: number;
+}
+
+interface ChartPoint {
+  x: number;
+  y: number;
+  data: TimelinePoint;
+}
+
 @Component({
   selector: "app-root",
   standalone: true,
@@ -178,6 +219,77 @@ interface RouteStatus {
           </aside>
         </section>
 
+        <section class="analytics-section">
+          <header class="analytics-head">
+            <div>
+              <p class="eyebrow">HISTORICAL RELIABILITY</p>
+              <h2>Performance over time.</h2>
+              <p>Minute-level observations derived from GTFS predictions and the published schedule.</p>
+            </div>
+            <div class="range-picker" aria-label="Analytics time range">
+              <button *ngFor="let range of timeRanges" type="button"
+                [class.active]="analyticsHours === range.hours"
+                (click)="selectTimeRange(range.hours)">{{ range.label }}</button>
+            </div>
+          </header>
+
+          <div class="analytics-kpis" *ngIf="analyticsSummary as summary">
+            <article><small>RELIABILITY</small><strong>{{ summary.reliabilityPercent | number:'1.0-1' }}%</strong><span>within ±5 minutes</span></article>
+            <article><small>AVERAGE DELAY</small><strong>{{ formatDelay(summary.averageDelaySeconds) }}</strong><span>across valid samples</span></article>
+            <article><small>OBSERVATIONS</small><strong>{{ summary.sampleCount }}</strong><span>{{ summary.routeCount }} routes represented</span></article>
+            <article><small>WINDOW</small><strong>{{ activeRangeLabel }}</strong><span>{{ analyticsScopeLabel }}</span></article>
+          </div>
+
+          <div class="analytics-grid" *ngIf="analyticsSummary?.sampleCount; else analyticsEmpty">
+            <article class="chart-card trend-card">
+              <header><div><small>RELIABILITY TREND</small><h3>On-time performance</h3></div><span>{{ timeline.length }} buckets</span></header>
+              <div class="line-chart">
+                <div class="axis-label top">100%</div><div class="axis-label middle">50%</div><div class="axis-label bottom">0%</div>
+                <svg viewBox="0 0 400 100" preserveAspectRatio="none" role="img" aria-label="Reliability percentage timeline">
+                  <line x1="10" y1="10" x2="390" y2="10"/><line x1="10" y1="50" x2="390" y2="50"/><line x1="10" y1="90" x2="390" y2="90"/>
+                  <path *ngIf="timeline.length > 1" [attr.d]="timelinePath" />
+                  <circle *ngFor="let point of chartPoints" [attr.cx]="point.x" [attr.cy]="point.y" r="3">
+                    <title>{{ timelinePointTitle(point.data) }}</title>
+                  </circle>
+                </svg>
+                <div class="chart-dates"><span>{{ timelineStartLabel }}</span><span>{{ timelineEndLabel }}</span></div>
+              </div>
+            </article>
+
+            <article class="chart-card distribution-card">
+              <header><div><small>SERVICE DISTRIBUTION</small><h3>Schedule adherence</h3></div></header>
+              <div class="distribution">
+                <div class="donut" [style.background]="distributionGradient">
+                  <div><strong>{{ analyticsSummary!.reliabilityPercent | number:'1.0-0' }}%</strong><span>reliable</span></div>
+                </div>
+                <div class="distribution-legend">
+                  <p><i class="early"></i><span>Early</span><b>{{ analyticsSummary!.earlySamples }}</b></p>
+                  <p><i class="on-time"></i><span>On time</span><b>{{ analyticsSummary!.onTimeSamples }}</b></p>
+                  <p><i class="late"></i><span>Late</span><b>{{ analyticsSummary!.lateSamples }}</b></p>
+                </div>
+              </div>
+            </article>
+
+            <article class="chart-card ranking-card">
+              <header><div><small>ROUTE COMPARISON</small><h3>Reliability by route</h3></div><span>{{ rankedRoutes.length }} reporting</span></header>
+              <div class="ranking-list">
+                <button *ngFor="let route of rankedRoutes" type="button" (click)="selectRoute(route.routeId)">
+                  <span class="rank-route" [style.background]="analyticsRouteColor(route)">{{ route.shortName }}</span>
+                  <span class="rank-copy"><b>{{ route.longName }}</b><small>{{ route.sampleCount }} observations · {{ formatDelay(route.averageDelaySeconds) }} avg</small></span>
+                  <span class="rank-meter"><i [style.width.%]="route.reliabilityPercent"></i></span>
+                  <strong>{{ route.reliabilityPercent | number:'1.0-0' }}%</strong>
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <ng-template #analyticsEmpty>
+            <div class="analytics-empty">
+              <span>◴</span><div><b>Building the reliability baseline</b><p>Live observations are being collected now. Charts will fill in as active trips report predicted stop times.</p></div>
+            </div>
+          </ng-template>
+        </section>
+
         <footer>
           <span>RoutePulse · Wolfline live operations</span>
           <span>GTFS schedule + GTFS-Realtime · Updated {{ lastUpdatedLabel }}</span>
@@ -194,6 +306,16 @@ class App implements OnInit {
   routes: Route[] = [];
   vehicles: Vehicle[] = [];
   selectedStatus: RouteStatus | null = null;
+  analyticsSummary: AnalyticsSummary | null = null;
+  timeline: TimelinePoint[] = [];
+  routePerformance: RoutePerformance[] = [];
+  analyticsHours = 24;
+  readonly timeRanges = [
+    { label: "1H", hours: 1 },
+    { label: "6H", hours: 6 },
+    { label: "24H", hours: 24 },
+    { label: "7D", hours: 168 },
+  ];
   selectedRouteId = "all";
   connectionState: "loading" | "live" | "offline" = "loading";
   loading = true;
@@ -245,12 +367,46 @@ class App implements OnInit {
     this.connectionState = "live";
     this.loading = false;
     this.loadRouteStatus();
+    this.loadAnalytics();
     this.changeDetector.detectChanges();
   }
 
   selectRoute(routeId: string): void {
     this.selectedRouteId = routeId;
     this.loadRouteStatus();
+    this.loadAnalytics();
+  }
+
+  selectTimeRange(hours: number): void {
+    this.analyticsHours = hours;
+    this.loadAnalytics();
+  }
+
+  private loadAnalytics(): void {
+    const routeQuery = this.selectedRouteId === "all"
+      ? ""
+      : `&routeId=${encodeURIComponent(this.selectedRouteId)}`;
+    forkJoin({
+      summary: this.http.get<AnalyticsSummary>(
+        `/api/v1/analytics/summary?hours=${this.analyticsHours}${routeQuery}`),
+      timeline: this.http.get<TimelinePoint[]>(
+        `/api/v1/analytics/timeline?hours=${this.analyticsHours}&bucketMinutes=${this.analyticsBucketMinutes}${routeQuery}`),
+      routes: this.http.get<RoutePerformance[]>(
+        `/api/v1/analytics/routes?hours=${this.analyticsHours}`),
+    }).subscribe({
+      next: ({ summary, timeline, routes }) => {
+        this.analyticsSummary = summary;
+        this.timeline = timeline;
+        this.routePerformance = routes;
+        this.changeDetector.detectChanges();
+      },
+      error: () => {
+        this.analyticsSummary = null;
+        this.timeline = [];
+        this.routePerformance = [];
+        this.changeDetector.detectChanges();
+      },
+    });
   }
 
   private loadRouteStatus(): void {
@@ -346,6 +502,73 @@ class App implements OnInit {
 
   vehicleTitle(vehicle: Vehicle): string {
     return `${vehicle.routeLongName || "Wolfline"} · Bus ${vehicle.vehicleId} · ${this.statusLabel(vehicle)}`;
+  }
+
+  get analyticsBucketMinutes(): number {
+    if (this.analyticsHours <= 1) return 5;
+    if (this.analyticsHours <= 6) return 15;
+    if (this.analyticsHours <= 24) return 60;
+    return 360;
+  }
+
+  get activeRangeLabel(): string {
+    return this.timeRanges.find(range => range.hours === this.analyticsHours)?.label || `${this.analyticsHours}H`;
+  }
+
+  get analyticsScopeLabel(): string {
+    if (this.selectedRouteId === "all") return "all reporting routes";
+    const route = this.routes.find(item => item.id === this.selectedRouteId);
+    return route ? `route ${route.shortName}` : "selected route";
+  }
+
+  get rankedRoutes(): RoutePerformance[] {
+    return this.routePerformance.filter(route => route.sampleCount > 0).slice(0, 6);
+  }
+
+  get chartPoints(): ChartPoint[] {
+    const count = this.timeline.length;
+    return this.timeline.map((data, index) => ({
+      x: count === 1 ? 200 : 10 + index * 380 / (count - 1),
+      y: 90 - Math.min(100, Math.max(0, data.reliabilityPercent)) * 0.8,
+      data,
+    }));
+  }
+
+  get timelinePath(): string {
+    return this.chartPoints.map((point, index) =>
+      `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+  }
+
+  get timelineStartLabel(): string {
+    return this.timeline.length ? this.chartDate(this.timeline[0].bucketStart) : "—";
+  }
+
+  get timelineEndLabel(): string {
+    return this.timeline.length ? this.chartDate(this.timeline[this.timeline.length - 1].bucketStart) : "—";
+  }
+
+  get distributionGradient(): string {
+    const summary = this.analyticsSummary;
+    if (!summary || !summary.sampleCount) return "conic-gradient(#2b4035 0 100%)";
+    const early = summary.earlySamples / summary.sampleCount * 100;
+    const onTime = summary.onTimeSamples / summary.sampleCount * 100;
+    return `conic-gradient(#79b9ff 0 ${early}%, #a6f06b ${early}% ${early + onTime}%, #ff786b ${early + onTime}% 100%)`;
+  }
+
+  analyticsRouteColor(route: RoutePerformance): string {
+    return route.color ? `#${route.color.replace("#", "")}` : "#9bea62";
+  }
+
+  timelinePointTitle(point: TimelinePoint): string {
+    return `${this.chartDate(point.bucketStart)} · ${point.reliabilityPercent}% reliable · ${point.sampleCount} samples`;
+  }
+
+  private chartDate(timestamp: string): string {
+    const date = new Date(timestamp);
+    if (this.analyticsHours <= 24) {
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+    return date.toLocaleDateString([], { month: "short", day: "numeric", hour: "numeric" });
   }
 
   trackVehicle(_: number, vehicle: Vehicle): string {

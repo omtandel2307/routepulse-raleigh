@@ -6,6 +6,7 @@ import com.google.transit.realtime.GtfsRealtime.TripUpdate.StopTimeEvent;
 import com.google.transit.realtime.GtfsRealtime.VehiclePosition;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 public final class GtfsRealtimeEventMapper {
@@ -53,10 +54,15 @@ public final class GtfsRealtimeEventMapper {
       return Optional.empty();
     }
 
+    Instant recordedAt = timestamp(update.hasTimestamp() ? update.getTimestamp() : 0, feedTimestamp);
     TripUpdate.StopTimeUpdate nextStop = update.getStopTimeUpdateList().stream()
         .filter(GtfsRealtimeEventMapper::hasPrediction)
+        .filter(stop -> isCurrentOrFuture(stop, recordedAt))
         .findFirst()
-        .orElse(null);
+        .orElseGet(() -> update.getStopTimeUpdateList().stream()
+            .filter(GtfsRealtimeEventMapper::hasPrediction)
+            .findFirst()
+            .orElse(null));
     Integer delay = update.hasDelay() ? Integer.valueOf(update.getDelay()) : delay(nextStop);
     String stopId = nextStop == null ? null : blankToNull(nextStop.getStopId());
     Integer stopSequence = nextStop != null && nextStop.hasStopSequence()
@@ -66,8 +72,6 @@ public final class GtfsRealtimeEventMapper {
     Instant departure = nextStop == null || !nextStop.hasDeparture()
         ? null : eventTime(nextStop.getDeparture());
     String vehicleId = update.hasVehicle() ? blankToNull(update.getVehicle().getId()) : null;
-    Instant recordedAt = timestamp(update.hasTimestamp() ? update.getTimestamp() : 0, feedTimestamp);
-
     return Optional.of(new TripUpdateEvent(agencyId, tripId,
         blankToNull(update.getTrip().getRouteId()), vehicleId, delay, stopId, stopSequence,
         arrival, departure, recordedAt));
@@ -75,6 +79,14 @@ public final class GtfsRealtimeEventMapper {
 
   private static boolean hasPrediction(TripUpdate.StopTimeUpdate update) {
     return update.hasArrival() || update.hasDeparture();
+  }
+
+  private static boolean isCurrentOrFuture(TripUpdate.StopTimeUpdate update, Instant recordedAt) {
+    Instant predictedAt = update.hasArrival() ? eventTime(update.getArrival()) : null;
+    if (predictedAt == null && update.hasDeparture()) {
+      predictedAt = eventTime(update.getDeparture());
+    }
+    return predictedAt == null || !predictedAt.isBefore(recordedAt.minus(2, ChronoUnit.MINUTES));
   }
 
   private static Integer delay(TripUpdate.StopTimeUpdate update) {

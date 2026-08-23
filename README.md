@@ -62,6 +62,21 @@ The API keeps an append-only vehicle-position history and replay-safe current ve
 PostgreSQL. Delay status is classified as `EARLY` (more than 5 minutes early), `ON_TIME` (within 5
 minutes), `LATE` (more than 5 minutes late), or `UNKNOWN` when the source feed has no matching delay.
 
+## Reliability analytics
+
+Wolfline publishes predicted stop timestamps rather than a direct delay value. RoutePulse joins each
+active prediction to its scheduled GTFS stop time and retains one guarded observation per trip per
+minute. Implausible deviations and predictions without a matching active vehicle are discarded.
+
+```powershell
+Invoke-RestMethod 'http://localhost:8080/api/v1/analytics/summary?hours=24'
+Invoke-RestMethod 'http://localhost:8080/api/v1/analytics/timeline?hours=24&bucketMinutes=60'
+Invoke-RestMethod 'http://localhost:8080/api/v1/analytics/routes?hours=24'
+```
+
+All three endpoints accept `agencyId`; summary and timeline also accept `routeId`. The dashboard
+provides 1-hour, 6-hour, 24-hour, and 7-day views.
+
 Wolfline feeds:
 
 - Schedule: `https://passio3.com/ncstateuni/passioTransit/gtfs/google_transit.zip`
@@ -79,6 +94,8 @@ Redis is exposed on host port `6380` to avoid collisions; containers use `6379`.
 - Vehicle-position and trip-update parsing and Kafka publishing (opt-in)
 - Kafka consumers for vehicle history and replay-safe current state
 - Active vehicle, route vehicle, and route delay-status APIs
+- Responsive live vehicle dashboard with route filtering
+- Minute-level delay history with feed-quality guardrails
+- Reliability summary, timeline, and route-comparison APIs and charts
 
-Next: surface live vehicles and route health on the Angular dashboard, then build historical
-reliability aggregates.
+Next: ingest service alerts and add stop-level arrival predictions.
