@@ -104,6 +104,39 @@ public class LiveTransitEventConsumer {
     }
   }
 
+  @Transactional
+  @KafkaListener(topics = KafkaConfig.SERVICE_ALERTS_TOPIC)
+  public void consumeServiceAlerts(ServiceAlertSnapshotEvent snapshot) {
+    Timestamp recordedAt = Timestamp.from(snapshot.recordedAt());
+    Timestamp receivedAt = Timestamp.from(Instant.now());
+    jdbc.update("DELETE FROM current_service_alert WHERE agency_id = ?", snapshot.agencyId());
+
+    for (ServiceAlertEvent alert : snapshot.alerts()) {
+      jdbc.update("""
+              INSERT INTO current_service_alert(
+                  agency_id, alert_id, cause, effect, header, description, url, recorded_at, received_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              """, snapshot.agencyId(), alert.alertId(), alert.cause(), alert.effect(), alert.header(),
+          alert.description(), alert.url(), recordedAt, receivedAt);
+      for (String routeId : alert.routeIds()) {
+        jdbc.update("INSERT INTO service_alert_route(agency_id, alert_id, route_id) VALUES (?, ?, ?)",
+            snapshot.agencyId(), alert.alertId(), routeId);
+      }
+      for (String stopId : alert.stopIds()) {
+        jdbc.update("INSERT INTO service_alert_stop(agency_id, alert_id, stop_id) VALUES (?, ?, ?)",
+            snapshot.agencyId(), alert.alertId(), stopId);
+      }
+      for (int index = 0; index < alert.activePeriods().size(); index++) {
+        ServiceAlertEvent.ActivePeriod period = alert.activePeriods().get(index);
+        jdbc.update("""
+                INSERT INTO service_alert_period(
+                    agency_id, alert_id, period_index, starts_at, ends_at) VALUES (?, ?, ?, ?, ?)
+                """, snapshot.agencyId(), alert.alertId(), index,
+            timestamp(period.startsAt()), timestamp(period.endsAt()));
+      }
+    }
+  }
+
   private Integer deriveDelay(TripUpdateEvent event) {
     if (event.delaySeconds() != null) {
       return event.delaySeconds();

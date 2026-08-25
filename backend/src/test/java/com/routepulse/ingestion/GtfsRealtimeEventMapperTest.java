@@ -1,7 +1,11 @@
 package com.routepulse.ingestion;
 
 import com.google.transit.realtime.GtfsRealtime.FeedEntity;
+import com.google.transit.realtime.GtfsRealtime.Alert;
+import com.google.transit.realtime.GtfsRealtime.EntitySelector;
 import com.google.transit.realtime.GtfsRealtime.Position;
+import com.google.transit.realtime.GtfsRealtime.TimeRange;
+import com.google.transit.realtime.GtfsRealtime.TranslatedString;
 import com.google.transit.realtime.GtfsRealtime.TripDescriptor;
 import com.google.transit.realtime.GtfsRealtime.TripUpdate;
 import com.google.transit.realtime.GtfsRealtime.VehicleDescriptor;
@@ -78,5 +82,38 @@ class GtfsRealtimeEventMapperTest {
 
     assertThat(event.delaySeconds()).isNull();
     assertThat(event.nextStopId()).isNull();
+  }
+
+  @Test
+  void mapsServiceAlertTargetsAndActivePeriod() {
+    FeedEntity entity = FeedEntity.newBuilder()
+        .setId("alert-1")
+        .setAlert(Alert.newBuilder()
+            .setCause(Alert.Cause.CONSTRUCTION)
+            .setEffect(Alert.Effect.DETOUR)
+            .setHeaderText(translated("Route 43 detour"))
+            .setDescriptionText(translated("Use the temporary stop on Hillsborough Street."))
+            .addInformedEntity(EntitySelector.newBuilder().setRouteId("route-43"))
+            .addInformedEntity(EntitySelector.newBuilder().setStopId("stop-7"))
+            .addActivePeriod(TimeRange.newBuilder()
+                .setStart(1_700_000_000L).setEnd(1_700_003_600L)))
+        .build();
+
+    ServiceAlertEvent event = GtfsRealtimeEventMapper.serviceAlert(entity).orElseThrow();
+
+    assertThat(event.alertId()).isEqualTo("alert-1");
+    assertThat(event.cause()).isEqualTo("CONSTRUCTION");
+    assertThat(event.effect()).isEqualTo("DETOUR");
+    assertThat(event.header()).isEqualTo("Route 43 detour");
+    assertThat(event.routeIds()).containsExactly("route-43");
+    assertThat(event.stopIds()).containsExactly("stop-7");
+    assertThat(event.activePeriods().getFirst().endsAt())
+        .isEqualTo(Instant.ofEpochSecond(1_700_003_600L));
+  }
+
+  private static TranslatedString translated(String text) {
+    return TranslatedString.newBuilder()
+        .addTranslation(TranslatedString.Translation.newBuilder().setText(text).setLanguage("en"))
+        .build();
   }
 }

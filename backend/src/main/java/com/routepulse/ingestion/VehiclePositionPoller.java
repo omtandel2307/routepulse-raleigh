@@ -9,6 +9,8 @@ import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
+
 @Component
 @ConditionalOnProperty(name = "routepulse.ingestion.enabled", havingValue = "true")
 public class VehiclePositionPoller {
@@ -51,6 +53,20 @@ public class VehiclePositionPoller {
                   event.agencyId() + ":" + event.tripId(), event)));
     } catch (RuntimeException exception) {
       log.warn("Unable to poll trip updates for agency {}", agency.id(), exception);
+    }
+
+    try {
+      var feed = client.fetch(agency.feeds().alerts());
+      Instant recordedAt = feed.getHeader().hasTimestamp()
+          ? Instant.ofEpochSecond(feed.getHeader().getTimestamp()) : Instant.now();
+      var alerts = feed.getEntityList().stream()
+          .map(GtfsRealtimeEventMapper::serviceAlert)
+          .flatMap(java.util.Optional::stream)
+          .toList();
+      var snapshot = new ServiceAlertSnapshotEvent(agency.id(), recordedAt, alerts);
+      kafka.send(KafkaConfig.SERVICE_ALERTS_TOPIC, agency.id(), snapshot);
+    } catch (RuntimeException exception) {
+      log.warn("Unable to poll service alerts for agency {}", agency.id(), exception);
     }
   }
 }

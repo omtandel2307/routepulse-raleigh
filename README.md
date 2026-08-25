@@ -57,6 +57,7 @@ After one polling cycle (about 15 seconds), inspect the live state:
 
 ```powershell
 Invoke-RestMethod 'http://localhost:8080/api/v1/vehicles?activeWithinMinutes=5'
+Invoke-RestMethod 'http://localhost:8080/api/v1/alerts'
 
 $route = Invoke-RestMethod http://localhost:8080/api/v1/routes |
   Where-Object shortName -eq '42' |
@@ -105,5 +106,6 @@ Redis is exposed on host port `6380` to avoid collisions; containers use `6379`.
 - Responsive live vehicle dashboard with route filtering
 - Minute-level delay history with feed-quality guardrails
 - Reliability summary, timeline, and route-comparison APIs and charts
+- Live service-alert ingestion with route-aware advisories
 
-Next: ingest service alerts and add stop-level arrival predictions.
+Next: add favorite routes and stops with rider-focused search.

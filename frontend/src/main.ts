@@ -63,6 +63,21 @@ interface StopArrival {
   recordedAt: string;
 }
 
+interface ServiceAlert {
+  agencyId: string;
+  alertId: string;
+  cause: string;
+  effect: string;
+  header: string;
+  description: string | null;
+  url: string | null;
+  routeIds: string[];
+  stopIds: string[];
+  startsAt: string | null;
+  endsAt: string | null;
+  recordedAt: string;
+}
+
 interface RouteStatus {
   routeId: string;
   shortName: string;
@@ -165,6 +180,34 @@ interface RouteGeometryFeature {
               </option>
             </select>
           </label>
+        </section>
+
+        <section class="service-alerts" [class.all-clear]="filteredAlerts.length === 0" aria-live="polite">
+          <header>
+            <div><small>SERVICE STATUS</small><h2>{{ alertHeading }}</h2></div>
+            <span class="alert-count" [class.clear]="filteredAlerts.length === 0">
+              {{ filteredAlerts.length ? filteredAlerts.length + ' ACTIVE' : 'ALL CLEAR' }}
+            </span>
+          </header>
+          <div class="alert-list" *ngIf="filteredAlerts.length; else noAlerts">
+            <article *ngFor="let alert of filteredAlerts">
+              <span class="alert-icon">!</span>
+              <div class="alert-copy">
+                <small>{{ alertEffectLabel(alert.effect) }}</small>
+                <h3>{{ alert.header }}</h3>
+                <p *ngIf="alert.description">{{ alert.description }}</p>
+                <div class="alert-meta">
+                  <span *ngIf="alert.routeIds.length">{{ alertRouteLabel(alert) }}</span>
+                  <span *ngIf="!alert.routeIds.length">Network-wide</span>
+                  <span>{{ alertTimeLabel(alert) }}</span>
+                  <a *ngIf="alert.url" [href]="alert.url" target="_blank" rel="noreferrer">Details ↗</a>
+                </div>
+              </div>
+            </article>
+          </div>
+          <ng-template #noAlerts>
+            <div class="alert-empty"><span>✓</span><p>No active detours, closures, or service advisories for {{ alertScopeLabel }}.</p></div>
+          </ng-template>
         </section>
 
         <section class="metrics" aria-label="Live network summary">
@@ -329,6 +372,7 @@ class App implements OnInit, AfterViewInit {
   routes: Route[] = [];
   stops: Stop[] = [];
   vehicles: Vehicle[] = [];
+  alerts: ServiceAlert[] = [];
   selectedStatus: RouteStatus | null = null;
   analyticsSummary: AnalyticsSummary | null = null;
   timeline: TimelinePoint[] = [];
@@ -369,13 +413,14 @@ class App implements OnInit, AfterViewInit {
           return forkJoin({
             routes: this.http.get<Route[]>("/api/v1/routes"),
             vehicles: this.http.get<Vehicle[]>("/api/v1/vehicles?activeWithinMinutes=5"),
+            alerts: this.http.get<ServiceAlert[]>("/api/v1/alerts"),
           });
         }),
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe({
-        next: ({ routes, vehicles }) => {
-          this.applySnapshot(routes, vehicles);
+        next: ({ routes, vehicles, alerts }) => {
+          this.applySnapshot(routes, vehicles, alerts);
         },
         error: () => {
           this.connectionState = "offline";
@@ -390,8 +435,9 @@ class App implements OnInit, AfterViewInit {
     forkJoin({
       routes: this.http.get<Route[]>("/api/v1/routes"),
       vehicles: this.http.get<Vehicle[]>("/api/v1/vehicles?activeWithinMinutes=5"),
+      alerts: this.http.get<ServiceAlert[]>("/api/v1/alerts"),
     }).subscribe({
-      next: ({ routes, vehicles }) => this.applySnapshot(routes, vehicles),
+      next: ({ routes, vehicles, alerts }) => this.applySnapshot(routes, vehicles, alerts),
       error: () => {
         this.connectionState = "offline";
         this.loading = false;
@@ -400,9 +446,10 @@ class App implements OnInit, AfterViewInit {
     });
   }
 
-  private applySnapshot(routes: Route[], vehicles: Vehicle[]): void {
+  private applySnapshot(routes: Route[], vehicles: Vehicle[], alerts: ServiceAlert[]): void {
     this.routes = routes;
     this.vehicles = vehicles;
+    this.alerts = alerts;
     this.lastRefresh = new Date();
     this.connectionState = "live";
     this.loading = false;
@@ -475,6 +522,50 @@ class App implements OnInit, AfterViewInit {
     return this.selectedRouteId === "all"
       ? this.vehicles
       : this.vehicles.filter(vehicle => vehicle.routeId === this.selectedRouteId);
+  }
+
+  get filteredAlerts(): ServiceAlert[] {
+    if (this.selectedRouteId === "all") return this.alerts;
+    return this.alerts.filter(alert =>
+      alert.routeIds.length === 0 || alert.routeIds.includes(this.selectedRouteId));
+  }
+
+  get alertHeading(): string {
+    if (this.filteredAlerts.length) {
+      return this.filteredAlerts.length === 1 ? "1 active advisory" : `${this.filteredAlerts.length} active advisories`;
+    }
+    return "Service operating normally";
+  }
+
+  get alertScopeLabel(): string {
+    if (this.selectedRouteId === "all") return "the Wolfline network";
+    const route = this.routes.find(item => item.id === this.selectedRouteId);
+    return route ? `Route ${route.shortName}` : "the selected route";
+  }
+
+  alertEffectLabel(effect: string): string {
+    const labels: Record<string, string> = {
+      DETOUR: "DETOUR",
+      NO_SERVICE: "NO SERVICE",
+      REDUCED_SERVICE: "REDUCED SERVICE",
+      SIGNIFICANT_DELAYS: "SIGNIFICANT DELAYS",
+      MODIFIED_SERVICE: "MODIFIED SERVICE",
+      STOP_MOVED: "STOP MOVED",
+      ADDITIONAL_SERVICE: "ADDITIONAL SERVICE",
+    };
+    return labels[effect] || effect.replaceAll("_", " ");
+  }
+
+  alertRouteLabel(alert: ServiceAlert): string {
+    const names = alert.routeIds.map(routeId =>
+      this.routes.find(route => route.id === routeId)?.shortName || routeId);
+    return `Route${names.length === 1 ? "" : "s"} ${names.join(", ")}`;
+  }
+
+  alertTimeLabel(alert: ServiceAlert): string {
+    if (!alert.endsAt) return "Until further notice";
+    const end = new Date(alert.endsAt);
+    return `Until ${end.toLocaleDateString([], { month: "short", day: "numeric" })} ${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   }
 
   get reportingRoutes(): number {

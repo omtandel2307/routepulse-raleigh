@@ -9,6 +9,7 @@ import org.springframework.kafka.config.TopicBuilder;
 public class KafkaConfig {
   public static final String VEHICLE_POSITIONS_TOPIC = "vehicle.positions";
   public static final String TRIP_UPDATES_TOPIC = "trip.updates";
+  public static final String SERVICE_ALERTS_TOPIC = "service.alerts";
 
   @Bean
   NewTopic vehiclePositionsTopic() {
@@ -18,5 +19,10 @@ public class KafkaConfig {
   @Bean
   NewTopic tripUpdatesTopic() {
     return TopicBuilder.name(TRIP_UPDATES_TOPIC).partitions(3).replicas(1).build();
+  }
+
+  @Bean
+  NewTopic serviceAlertsTopic() {
+    return TopicBuilder.name(SERVICE_ALERTS_TOPIC).partitions(1).replicas(1).build();
   }
 }

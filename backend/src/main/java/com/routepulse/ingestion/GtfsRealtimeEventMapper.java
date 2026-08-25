@@ -1,12 +1,17 @@
 package com.routepulse.ingestion;
 
 import com.google.transit.realtime.GtfsRealtime.FeedEntity;
+import com.google.transit.realtime.GtfsRealtime.Alert;
+import com.google.transit.realtime.GtfsRealtime.EntitySelector;
+import com.google.transit.realtime.GtfsRealtime.TimeRange;
+import com.google.transit.realtime.GtfsRealtime.TranslatedString;
 import com.google.transit.realtime.GtfsRealtime.TripUpdate;
 import com.google.transit.realtime.GtfsRealtime.TripUpdate.StopTimeEvent;
 import com.google.transit.realtime.GtfsRealtime.VehiclePosition;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Optional;
 
 public final class GtfsRealtimeEventMapper {
@@ -75,6 +80,68 @@ public final class GtfsRealtimeEventMapper {
     return Optional.of(new TripUpdateEvent(agencyId, tripId,
         blankToNull(update.getTrip().getRouteId()), vehicleId, delay, stopId, stopSequence,
         arrival, departure, recordedAt));
+  }
+
+  public static Optional<ServiceAlertEvent> serviceAlert(FeedEntity entity) {
+    if (!entity.hasAlert()) {
+      return Optional.empty();
+    }
+    String alertId = blankToNull(entity.getId());
+    if (alertId == null) {
+      return Optional.empty();
+    }
+
+    Alert alert = entity.getAlert();
+    List<String> routeIds = alert.getInformedEntityList().stream()
+        .map(EntitySelector::getRouteId)
+        .map(GtfsRealtimeEventMapper::blankToNull)
+        .filter(java.util.Objects::nonNull)
+        .distinct()
+        .toList();
+    List<String> stopIds = alert.getInformedEntityList().stream()
+        .map(EntitySelector::getStopId)
+        .map(GtfsRealtimeEventMapper::blankToNull)
+        .filter(java.util.Objects::nonNull)
+        .distinct()
+        .toList();
+    List<ServiceAlertEvent.ActivePeriod> periods = alert.getActivePeriodList().stream()
+        .map(GtfsRealtimeEventMapper::activePeriod)
+        .toList();
+    String cause = alert.hasCause() ? alert.getCause().name() : "UNKNOWN_CAUSE";
+    String effect = alert.hasEffect() ? alert.getEffect().name() : "UNKNOWN_EFFECT";
+    String header = translation(alert.hasHeaderText() ? alert.getHeaderText() : null);
+    if (header == null) {
+      header = humanize(effect);
+    }
+    return Optional.of(new ServiceAlertEvent(alertId, cause, effect, header,
+        translation(alert.hasDescriptionText() ? alert.getDescriptionText() : null),
+        translation(alert.hasUrl() ? alert.getUrl() : null), routeIds, stopIds, periods));
+  }
+
+  private static ServiceAlertEvent.ActivePeriod activePeriod(TimeRange period) {
+    Instant startsAt = period.hasStart() && period.getStart() > 0
+        ? Instant.ofEpochSecond(period.getStart()) : null;
+    Instant endsAt = period.hasEnd() && period.getEnd() > 0
+        ? Instant.ofEpochSecond(period.getEnd()) : null;
+    return new ServiceAlertEvent.ActivePeriod(startsAt, endsAt);
+  }
+
+  private static String translation(TranslatedString translated) {
+    if (translated == null || translated.getTranslationCount() == 0) {
+      return null;
+    }
+    return translated.getTranslationList().stream()
+        .filter(item -> "en".equalsIgnoreCase(item.getLanguage()))
+        .map(TranslatedString.Translation::getText)
+        .map(GtfsRealtimeEventMapper::blankToNull)
+        .filter(java.util.Objects::nonNull)
+        .findFirst()
+        .orElseGet(() -> blankToNull(translated.getTranslation(0).getText()));
+  }
+
+  private static String humanize(String value) {
+    String normalized = value == null ? "SERVICE ALERT" : value.replace('_', ' ').toLowerCase();
+    return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
   }
 
   private static boolean hasPrediction(TripUpdate.StopTimeUpdate update) {
