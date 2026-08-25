@@ -2,6 +2,7 @@ package com.routepulse.api;
 
 import com.routepulse.live.LiveTransitRepository;
 import com.routepulse.live.LiveTransitRepository.RouteStatus;
+import com.routepulse.live.LiveTransitRepository.StopArrival;
 import com.routepulse.live.LiveTransitRepository.VehicleView;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -49,6 +50,14 @@ public class LiveTransitController {
       @RequestParam(defaultValue = "wolfline") String agencyId,
       @RequestParam(defaultValue = "5") @Min(1) @Max(120) int activeWithinMinutes) {
     return ResponseEntity.of(liveTransit.routeStatus(agencyId, routeId, cutoff(activeWithinMinutes)));
+  }
+
+  @GetMapping("/stops/{stopId}/arrivals")
+  public List<StopArrival> stopArrivals(
+      @PathVariable String stopId,
+      @RequestParam(defaultValue = "wolfline") String agencyId,
+      @RequestParam(defaultValue = "5") @Min(1) @Max(120) int activeWithinMinutes) {
+    return liveTransit.stopArrivals(agencyId, stopId, cutoff(activeWithinMinutes));
   }
 
   private static Instant cutoff(int activeWithinMinutes) {

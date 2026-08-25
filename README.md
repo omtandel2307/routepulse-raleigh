@@ -34,16 +34,19 @@ Invoke-RestMethod http://localhost:8080/api/v1/schedule/status
 Invoke-RestMethod http://localhost:8080/api/v1/routes
 Invoke-RestMethod http://localhost:8080/api/v1/routes/geometry
 Invoke-RestMethod http://localhost:8080/api/v1/stops
+Invoke-RestMethod http://localhost:8080/api/v1/stops/STOP_ID/arrivals
 ```
 
 The dashboard uses Leaflet with OpenStreetMap streets. GTFS `shapes.txt` coordinates are
 served as GeoJSON by `/api/v1/routes/geometry`, so selecting or clicking a route highlights its real
 published path. Live bus markers update every 15 seconds and open vehicle detail popups when clicked.
+Serviced stops appear as white map dots; clicking one shows its routes, accessibility status, and any
+approaching buses currently reported by GTFS-Realtime.
 
 To import automatically when the API starts, set
 `ROUTEPULSE_SCHEDULE_IMPORT_ON_STARTUP=true`. Manual import is the safer development default.
 
-Live ingestion is disabled by default. Enable it with:
+Live ingestion is enabled by default in Docker Compose. To explicitly start or refresh the API with it enabled:
 
 ```powershell
 $env:ROUTEPULSE_INGESTION_ENABLED = 'true'

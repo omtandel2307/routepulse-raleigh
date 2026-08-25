@@ -96,6 +96,40 @@ public class LiveTransitRepository {
         .optional();
   }
 
+  public List<StopArrival> stopArrivals(String agencyId, String stopId, Instant cutoff) {
+    return jdbc.sql("""
+            SELECT update.trip_id, update.route_id, route.short_name, route.long_name,
+                   update.vehicle_id, update.estimated_arrival, update.estimated_departure,
+                   update.delay_seconds, update.recorded_at
+            FROM current_trip_update update
+            LEFT JOIN transit_route route
+              ON route.agency_id = update.agency_id AND route.route_id = update.route_id
+            WHERE update.agency_id = :agencyId
+              AND update.next_stop_id = :stopId
+              AND update.recorded_at >= :cutoff
+              AND COALESCE(update.estimated_arrival, update.estimated_departure) >= now() - interval '1 minute'
+            ORDER BY COALESCE(update.estimated_arrival, update.estimated_departure) NULLS LAST,
+                     update.trip_id
+            """)
+        .param("agencyId", agencyId)
+        .param("stopId", stopId)
+        .param("cutoff", OffsetDateTime.ofInstant(cutoff, java.time.ZoneOffset.UTC))
+        .query((row, number) -> new StopArrival(
+            agencyId,
+            stopId,
+            row.getString("trip_id"),
+            row.getString("route_id"),
+            row.getString("short_name"),
+            row.getString("long_name"),
+            row.getString("vehicle_id"),
+            instant(row, "estimated_arrival"),
+            instant(row, "estimated_departure"),
+            row.getObject("delay_seconds", Integer.class),
+            instant(row, "recorded_at")
+        ))
+        .list();
+  }
+
   private VehicleView vehicle(ResultSet row, int number) throws SQLException {
     Integer delay = row.getObject("delay_seconds", Integer.class);
     return new VehicleView(
@@ -181,6 +215,21 @@ public class LiveTransitRepository {
       long unknownVehicles,
       Integer averageDelaySeconds,
       Instant lastUpdated
+  ) {
+  }
+
+  public record StopArrival(
+      String agencyId,
+      String stopId,
+      String tripId,
+      String routeId,
+      String routeShortName,
+      String routeLongName,
+      String vehicleId,
+      Instant estimatedArrival,
+      Instant estimatedDeparture,
+      Integer delaySeconds,
+      Instant recordedAt
   ) {
   }
 }

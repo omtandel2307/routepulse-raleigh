@@ -52,7 +52,7 @@ services:
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      ROUTEPULSE_INGESTION_ENABLED: ${ROUTEPULSE_INGESTION_ENABLED:-false}
+      ROUTEPULSE_INGESTION_ENABLED: ${ROUTEPULSE_INGESTION_ENABLED:-true}
     ports: ["8080:8080"]
     depends_on:
       postgres: {condition: service_healthy}
@@ -64,4 +64,3 @@ services:
     depends_on: [api]
 volumes:
   postgres-data:
-

@@ -37,6 +37,32 @@ interface Vehicle {
   recordedAt: string;
 }
 
+interface Stop {
+  agencyId: string;
+  id: string;
+  code: string | null;
+  name: string;
+  latitude: number;
+  longitude: number;
+  wheelchairBoarding: number | null;
+  tripCount: number;
+  routeIds: string[];
+}
+
+interface StopArrival {
+  agencyId: string;
+  stopId: string;
+  tripId: string;
+  routeId: string | null;
+  routeShortName: string | null;
+  routeLongName: string | null;
+  vehicleId: string | null;
+  estimatedArrival: string | null;
+  estimatedDeparture: string | null;
+  delaySeconds: number | null;
+  recordedAt: string;
+}
+
 interface RouteStatus {
   routeId: string;
   shortName: string;
@@ -168,7 +194,7 @@ interface RouteGeometryFeature {
           <article class="map-card">
             <header class="panel-head">
               <div><small>LIVE VEHICLE MAP</small><h2>{{ selectedRouteName }}</h2></div>
-              <div class="legend"><span><i class="dot on-time"></i>On time</span><span><i class="dot late"></i>Late</span><span><i class="dot unknown"></i>Unknown</span></div>
+              <div class="legend"><span><i class="dot on-time"></i>On time</span><span><i class="dot late"></i>Late</span><span><i class="dot unknown"></i>Unknown</span><span><i class="dot stop-dot"></i>Stop</span></div>
             </header>
             <div class="map real-map-shell">
               <div #mapContainer class="real-map" aria-label="Interactive map of Wolfline buses and routes"></div>
@@ -296,10 +322,12 @@ class App implements OnInit, AfterViewInit {
   private readonly changeDetector = inject(ChangeDetectorRef);
   private map: L.Map | null = null;
   private readonly vehicleMarkers = new Map<string, L.Marker>();
+  private readonly stopMarkers = new Map<string, L.CircleMarker>();
   private readonly routePolylines: Array<{ routeId: string; line: L.Polyline }> = [];
   private geometry: RouteGeometryCollection | null = null;
 
   routes: Route[] = [];
+  stops: Stop[] = [];
   vehicles: Vehicle[] = [];
   selectedStatus: RouteStatus | null = null;
   analyticsSummary: AnalyticsSummary | null = null;
@@ -327,11 +355,13 @@ class App implements OnInit, AfterViewInit {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(this.map);
     this.loadRouteGeometry();
+    this.addStopMarkers();
     this.updateVehicleMarkers();
     this.destroyRef.onDestroy(() => this.map?.remove());
   }
 
   ngOnInit(): void {
+    this.loadStops();
     timer(0, 15_000)
       .pipe(
         switchMap(() => {
@@ -387,6 +417,7 @@ class App implements OnInit, AfterViewInit {
     this.loadRouteStatus();
     this.loadAnalytics();
     this.updateMapSelection(true);
+    this.updateStopMarkers();
     this.updateVehicleMarkers();
   }
 
@@ -509,6 +540,134 @@ class App implements OnInit, AfterViewInit {
 
   vehicleTitle(vehicle: Vehicle): string {
     return `${vehicle.routeLongName || "Wolfline"} · Bus ${vehicle.vehicleId} · ${this.statusLabel(vehicle)}`;
+  }
+
+  private loadStops(): void {
+    this.http.get<Stop[]>("/api/v1/stops")
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: stops => {
+          this.stops = stops.filter(stop => stop.tripCount > 0);
+          this.addStopMarkers();
+          this.updateStopMarkers();
+          this.changeDetector.detectChanges();
+        },
+        error: () => {
+          this.stops = [];
+        },
+      });
+  }
+
+  private addStopMarkers(): void {
+    if (!this.map || !this.stops.length) return;
+    for (const stop of this.stops) {
+      if (this.stopMarkers.has(stop.id)) continue;
+      const marker = L.circleMarker([stop.latitude, stop.longitude], {
+        radius: 4,
+        color: "#07110d",
+        weight: 2,
+        fillColor: "#e9f3ed",
+        fillOpacity: 0.78,
+        className: "transit-stop-marker",
+      }).addTo(this.map);
+      marker.bindTooltip(stop.name, { direction: "top", className: "route-tooltip" });
+      marker.on("click", () => this.openStopPopup(stop, marker));
+      this.stopMarkers.set(stop.id, marker);
+    }
+  }
+
+  private updateStopMarkers(): void {
+    for (const stop of this.stops) {
+      const marker = this.stopMarkers.get(stop.id);
+      if (!marker) continue;
+      const served = this.selectedRouteId === "all" || stop.routeIds.includes(this.selectedRouteId);
+      marker.setStyle({
+        fillOpacity: served ? 0.82 : 0.08,
+        opacity: served ? 1 : 0.18,
+      });
+      marker.setRadius(this.selectedRouteId !== "all" && served ? 5 : 4);
+      if (served) marker.bringToFront();
+    }
+  }
+
+  private openStopPopup(stop: Stop, marker: L.CircleMarker): void {
+    marker.bindPopup(this.stopPopupContent(stop, [], true), {
+      closeButton: false,
+      maxWidth: 330,
+      minWidth: 250,
+      className: "routepulse-popup stop-popup-shell",
+    }).openPopup();
+    this.http.get<StopArrival[]>(`/api/v1/stops/${encodeURIComponent(stop.id)}/arrivals?activeWithinMinutes=5`)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: arrivals => marker.setPopupContent(this.stopPopupContent(stop, arrivals, false)),
+        error: () => marker.setPopupContent(this.stopPopupContent(stop, [], false)),
+      });
+  }
+
+  private stopPopupContent(stop: Stop, arrivals: StopArrival[], loading: boolean): HTMLElement {
+    const content = document.createElement("div");
+    content.className = "stop-popup";
+    const eyebrow = document.createElement("small");
+    eyebrow.textContent = stop.code ? `STOP ${stop.code}` : "WOLFLINE STOP";
+    const title = document.createElement("strong");
+    title.textContent = stop.name;
+    const meta = document.createElement("p");
+    meta.className = "stop-meta";
+    meta.textContent = stop.wheelchairBoarding === 1
+      ? "♿ Accessible boarding"
+      : stop.wheelchairBoarding === 2 ? "Accessibility not available" : "Accessibility not specified";
+    const routes = document.createElement("div");
+    routes.className = "stop-routes";
+    for (const routeId of stop.routeIds) {
+      const route = this.routes.find(item => item.id === routeId);
+      const badge = document.createElement("span");
+      badge.style.background = this.routeColor(routeId);
+      badge.textContent = route?.shortName || routeId;
+      routes.append(badge);
+    }
+    const arrivalSection = document.createElement("div");
+    arrivalSection.className = "stop-arrivals";
+    const arrivalHeading = document.createElement("small");
+    arrivalHeading.textContent = "UPCOMING LIVE ARRIVALS";
+    arrivalSection.append(arrivalHeading);
+    if (loading) {
+      const loadingCopy = document.createElement("p");
+      loadingCopy.textContent = "Checking active trips…";
+      arrivalSection.append(loadingCopy);
+    } else if (!arrivals.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "No approaching buses are reporting for this stop right now.";
+      arrivalSection.append(empty);
+    } else {
+      for (const arrival of arrivals.slice(0, 5)) {
+        const row = document.createElement("div");
+        row.className = "arrival-row";
+        const badge = document.createElement("span");
+        badge.style.background = this.routeColor(arrival.routeId);
+        badge.textContent = arrival.routeShortName || "BUS";
+        const copy = document.createElement("div");
+        const routeName = document.createElement("b");
+        routeName.textContent = arrival.routeLongName || "Wolfline vehicle";
+        const detail = document.createElement("small");
+        detail.textContent = arrival.vehicleId ? `Bus ${arrival.vehicleId}` : "Active trip";
+        copy.append(routeName, detail);
+        const eta = document.createElement("strong");
+        eta.textContent = this.arrivalLabel(arrival);
+        row.append(badge, copy, eta);
+        arrivalSection.append(row);
+      }
+    }
+    content.append(eyebrow, title, meta, routes, arrivalSection);
+    return content;
+  }
+
+  private arrivalLabel(arrival: StopArrival): string {
+    const estimate = arrival.estimatedArrival || arrival.estimatedDeparture;
+    if (!estimate) return "—";
+    const minutes = Math.ceil((new Date(estimate).getTime() - Date.now()) / 60_000);
+    if (minutes <= 0) return "Due";
+    return `${minutes} min`;
   }
 
   private loadRouteGeometry(): void {

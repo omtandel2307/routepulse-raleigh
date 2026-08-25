@@ -47,12 +47,17 @@ public class TransitCatalogRepository {
   public List<StopView> stops(String agencyId) {
     return jdbc.sql("""
             SELECT stop.stop_id, stop.stop_code, stop.name, stop.latitude, stop.longitude,
-                   COUNT(DISTINCT stop_time.trip_id) AS trip_count
+                   stop.wheelchair_boarding,
+                   COUNT(DISTINCT stop_time.trip_id) AS trip_count,
+                   COALESCE(STRING_AGG(DISTINCT trip.route_id, ',' ORDER BY trip.route_id), '') AS route_ids
             FROM transit_stop stop
             LEFT JOIN stop_time
               ON stop_time.agency_id = stop.agency_id AND stop_time.stop_id = stop.stop_id
+            LEFT JOIN transit_trip trip
+              ON trip.agency_id = stop_time.agency_id AND trip.trip_id = stop_time.trip_id
             WHERE stop.agency_id = :agencyId
-            GROUP BY stop.stop_id, stop.stop_code, stop.name, stop.latitude, stop.longitude
+            GROUP BY stop.stop_id, stop.stop_code, stop.name, stop.latitude, stop.longitude,
+                     stop.wheelchair_boarding
             ORDER BY stop.name
             """)
         .param("agencyId", agencyId)
@@ -63,7 +68,9 @@ public class TransitCatalogRepository {
             row.getString("name"),
             row.getDouble("latitude"),
             row.getDouble("longitude"),
-            row.getLong("trip_count")
+            row.getObject("wheelchair_boarding", Integer.class),
+            row.getLong("trip_count"),
+            routeIds(row.getString("route_ids"))
         ))
         .list();
   }
@@ -134,7 +141,8 @@ public class TransitCatalogRepository {
   }
 
   public record StopView(String agencyId, String id, String code, String name, double latitude,
-                         double longitude, long tripCount) {
+                         double longitude, Integer wheelchairBoarding, long tripCount,
+                         List<String> routeIds) {
   }
 
   public record ImportStatus(String agencyId, String sourceUrl, Instant importedAt, int routes,
@@ -172,5 +180,9 @@ public class TransitCatalogRepository {
               metadata.shapeId(), metadata.directionId()),
           new LineStringGeometry("LineString", List.copyOf(coordinates)));
     }
+  }
+
+  private static List<String> routeIds(String value) {
+    return value == null || value.isBlank() ? List.of() : List.of(value.split(","));
   }
 }
